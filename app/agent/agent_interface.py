@@ -46,9 +46,16 @@ class AgentInterface:
         message: str,
         user_id: str,
         thread_id: str,
+        course_id: str = "",
     ) -> AsyncIterator[dict]:
         """
         流式对话接口，返回异步迭代器供后端通过 SSE 推送给前端。
+
+        参数：
+            message   (str)  用户输入的文本
+            user_id   (str)  用户 ID
+            thread_id (str)  会话 ID，用于隔离不同对话的短期记忆
+            course_id (str)  课程 ID，用于限定工具操作的课程范围（可选）
 
         ── 事件协议（前端请按此解析）──
 
@@ -59,12 +66,12 @@ class AgentInterface:
         1. token — LLM 逐字输出（打字机效果）
             {
                 "type": "token",
-                "node": "course_agent_node",     # 来源节点
+                "node": "course_agent",          # 来源节点
                 "content": "Python基础课程..."    # 增量文本
             }
-            前端判断：node 是 ReAct agent（*_agent_node 且非 chat_agent_node）
+            前端判断：node 是 ReAct agent（course_agent、concept_agent 等）
                      → 展示为"思考中"区域，建议可折叠
-                     node 是 chat_agent_node
+                     node 是 chat_agent
                      → 展示为最终回答区域
 
         2. operation — 工具开始执行
@@ -91,9 +98,16 @@ class AgentInterface:
         input_data = {
             "messages": [HumanMessage(content=message)],
             "user_id": user_id,
+            "course_id": course_id,
         }
 
-        config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": user_id,
+                "course_id": course_id,
+            }
+        }
 
         async for event in self.graph.astream_events(input_data, config, version="v2"):
             kind = event["event"]

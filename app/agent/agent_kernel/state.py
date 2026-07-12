@@ -9,3 +9,5 @@ class AgentState(TypedDict):
     next:str
     #user id
     user_id:str
+    #course id
+    course_id:str
