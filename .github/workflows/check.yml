@@ -1,0 +1,34 @@
+name: source-checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: course-agent-frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: course-agent-frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  backend-syntax:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: course-agent-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m compileall -q app

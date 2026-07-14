@@ -1,0 +1,71 @@
+{
+  "name": "course-study-desk",
+  "version": "1.0.0",
+  "private": true,
+  "description": "课程学习助手桌面端",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "desktop": "npm run build && electron .",
+    "backend:build": "powershell -ExecutionPolicy Bypass -File ../course-agent-backend/build-desktop.ps1",
+    "dist": "powershell -ExecutionPolicy Bypass -File ./build-release.ps1"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "katex": "^0.17.0",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-icons": "^5.7.0",
+    "react-markdown": "^10.1.0",
+    "recharts": "latest",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "build": {
+    "appId": "cn.study.courseassistant",
+    "productName": "课程学习助手",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../course-agent-backend/dist/course-agent-backend.exe",
+        "to": "backend/course-agent-backend.exe"
+      }
+    ],
+    "win": {
+      "icon": "app/favicon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "${productName}-安装版-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "portable": {
+      "artifactName": "${productName}-便携版-${version}-${arch}.${ext}"
+    }
+  }
+}

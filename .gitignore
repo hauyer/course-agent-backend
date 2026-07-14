@@ -1,0 +1,62 @@
+# Secrets and machine-specific configuration
+**/.env
+**/.env.*
+!**/.env.example
+**/runtime-config.json
+
+# Python environments and caches (kept locally, never committed)
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Node dependencies and caches
+**/node_modules/
+**/.npm/
+**/.vite/
+**/*.tsbuildinfo
+
+# Generated builds and desktop installers
+**/build/
+**/dist/
+**/release/
+**/release-stage/
+**/*.exe
+**/*.msi
+**/*.appx
+**/*.blockmap
+
+# Local application data
+**/uploads/
+**/chroma_db/
+**/backend.log
+**/*.log
+**/course-study-backup-*.zip
+
+# Editors and operating systems
+**/.idea/
+**/.vscode/
+**/.claude/
+**/.jbeval/
+**/.DS_Store
+**/Thumbs.db
+
+# Local design/reference material; not required at runtime
+/course-agent-frontend/skill/
+
+# Confirmed legacy frontend prototype (preserved locally pending manual approval)
+/course-agent-frontend/app/*
+!/course-agent-frontend/app/favicon.ico
+/course-agent-frontend/components/
+/course-agent-frontend/hooks/
+/course-agent-frontend/lib/
+
+# Files emitted from vite.config.ts by the TypeScript build
+/course-agent-frontend/vite.config.js
+/course-agent-frontend/vite.config.d.ts
+
+# Empty legacy placeholder (preserved locally pending manual approval)
+/course-agent-backend/1.txt
