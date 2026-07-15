@@ -337,7 +337,11 @@ def delete_all_user_materials_api(
 
     try:
         for material in materials:
-            delete_material_vectors(material.id)
+            delete_material_vectors(
+                user_id=material.user_id,
+                course_id=material.course_id,
+                material_id=material.id,
+            )
             candidate = Path(material.file_path).resolve()
             try:
                 candidate.relative_to(upload_root)
@@ -427,7 +431,11 @@ def delete_material_api(
 
     try:
         # 先删除向量数据
-        delete_material_vectors(material.id)
+        delete_material_vectors(
+            user_id=material.user_id,
+            course_id=material.course_id,
+            material_id=material.id,
+        )
 
         # 再删除 MySQL 记录
         delete_material(
@@ -560,7 +568,11 @@ async def parse_material_again_api(
 
             return material
         # 重新解析后，旧分块对应的向量已经失效
-        delete_material_vectors(material.id)
+        delete_material_vectors(
+            user_id=material.user_id,
+            course_id=material.course_id,
+            material_id=material.id,
+        )
 
         # 删除旧分块并写入新的分块
 
@@ -696,7 +708,11 @@ def rebuild_material_chunks_api(
             detail="未生成有效资料分块"
         )
     # 清除旧分块对应的 Chroma 向量
-    delete_material_vectors(material.id)
+    delete_material_vectors(
+        user_id=material.user_id,
+        course_id=material.course_id,
+        material_id=material.id,
+    )
 
     # 用新的分块替换 MySQL 中的旧分块
     chunk_models = replace_material_chunks(

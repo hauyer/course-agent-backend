@@ -33,11 +33,14 @@ class AgentCitationItem(BaseModel):
     course_name: str
     material_id: int
     material_title: str
+    file_type: Optional[str] = None
     chunk_id: int
     chunk_index: int
     page_no: Optional[int] = None
     content: str
+    distance: Optional[float] = None
     similarity_score: float
+    similarity_percent: Optional[float] = None
 
 
 class AgentChatResponse(BaseModel):

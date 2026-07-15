@@ -6,10 +6,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.agent.citations import CitationCollector, get_citation_collector
-from app.models.course import Course
-from app.models.material import Material
-from app.models.material_chunk import MaterialChunk
-from app.services.vector_service import semantic_search
+from app.services.course_retrieval_service import (
+    retrieve_course_chunks as retrieve_structured_course_chunks,
+)
 
 
 MAX_CITATION_CONTENT_LENGTH = 1000
@@ -30,78 +29,35 @@ def retrieve_course_chunks(
     course_id: int,
     query: str,
     top_k: int,
+    min_similarity: float | None = None,
     collector: CitationCollector | None = None,
 ) -> list[dict[str, Any]]:
-    """Retrieve from Chroma, then verify every result against owned SQL rows."""
+    """Register canonical retrieval results in the request-local collector."""
 
-    if user_id < 1 or course_id < 1:
-        raise ValueError("无法确定当前用户或课程")
-    if not query.strip():
-        raise ValueError("检索问题不能为空")
-    top_k = max(1, min(int(top_k), 10))
-
-    course = (
-        db.query(Course)
-        .filter(Course.id == course_id, Course.user_id == user_id)
-        .first()
-    )
-    if course is None:
-        raise PermissionError("课程不存在或无权限访问")
-
-    raw_results = semantic_search(
-        db=db,
+    results = retrieve_structured_course_chunks(
+        db,
         user_id=user_id,
         course_id=course_id,
         query=query,
         top_k=top_k,
+        min_similarity=min_similarity,
     )
-    ordered_chunk_ids: list[int] = []
-    by_chunk_result: dict[int, dict[str, Any]] = {}
-    for item in raw_results:
-        try:
-            chunk_id = int(item["chunk_id"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if chunk_id in by_chunk_result:
-            continue
-        ordered_chunk_ids.append(chunk_id)
-        by_chunk_result[chunk_id] = item
-
-    if not ordered_chunk_ids:
-        return []
-
-    verified_rows = (
-        db.query(MaterialChunk, Material)
-        .join(Material, Material.id == MaterialChunk.material_id)
-        .filter(
-            MaterialChunk.id.in_(ordered_chunk_ids),
-            MaterialChunk.user_id == user_id,
-            MaterialChunk.course_id == course_id,
-            Material.user_id == user_id,
-            Material.course_id == course_id,
-        )
-        .all()
-    )
-    verified = {chunk.id: (chunk, material) for chunk, material in verified_rows}
     active_collector = collector or get_citation_collector()
     output: list[dict[str, Any]] = []
-
-    for chunk_id in ordered_chunk_ids:
-        pair = verified.get(chunk_id)
-        if pair is None:
-            continue
-        chunk, material = pair
-        raw = by_chunk_result[chunk_id]
+    for result in results:
         citation = {
-            "course_id": course.id,
-            "course_name": course.name,
-            "material_id": material.id,
-            "material_title": material.title,
-            "chunk_id": chunk.id,
-            "chunk_index": chunk.chunk_index,
-            "page_no": chunk.page_no,
-            "content": _safe_excerpt(chunk.content),
-            "similarity_score": round(float(raw.get("similarity_score", 0.0)), 4),
+            "course_id": result.course_id,
+            "course_name": result.course_name,
+            "material_id": result.material_id,
+            "material_title": result.material_title,
+            "file_type": result.file_type,
+            "chunk_id": result.chunk_id,
+            "chunk_index": result.chunk_index,
+            "page_no": result.page_no,
+            "content": _safe_excerpt(result.content),
+            "distance": result.distance,
+            "similarity_score": result.similarity_score,
+            "similarity_percent": result.similarity_percent,
         }
         if active_collector is not None:
             citation = active_collector.register(citation)
@@ -124,6 +80,7 @@ def build_agent_citation_context(citations: list[dict[str, Any]]) -> str:
                     f"课程：{item['course_name']}",
                     f"资料：{item['material_title']}",
                     f"位置：{page}，片段 {item['chunk_index']}",
+                    f"余弦相似度：{float(item['similarity_score']):.4f}",
                     f"片段：{item['content']}",
                 ]
             )

@@ -1,4 +1,3 @@
-import os
 from typing import Any
 
 
@@ -10,6 +9,7 @@ from langchain_core.messages import (
 from sqlalchemy.orm import Session
 
 from app.agent.agent_kernel.config import init_model as get_chat_model
+from app.config import get_settings
 from app.services.citation_service import (
     build_agent_citation_context,
     retrieve_course_chunks,
@@ -89,7 +89,7 @@ def answer_course_question(
         raise ValueError("问题不能为空")
 
     if top_k is None:
-        top_k = int(os.getenv("RAG_TOP_K", "5"))
+        top_k = get_settings().semantic_search_top_k
 
     search_results = retrieve_course_chunks(
         db,
@@ -102,7 +102,7 @@ def answer_course_question(
     if not search_results:
         return {
             "course_id": course_id,
-            "answer": "当前课程还没有可用于回答该问题的资料。",
+            "answer": "当前课程资料中未检索到相似度足够高的内容。",
             "citations": [],
         }
 

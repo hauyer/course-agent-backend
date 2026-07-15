@@ -1,224 +1,301 @@
-import os
-from typing import Any, Optional
+from __future__ import annotations
+
+import math
+import threading
+from typing import Any
 
 import chromadb
-from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database import SessionLocal
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
-from app.utils.file_parser import normalize_text
 
-load_dotenv()
 
-EMBEDDING_MODEL_NAME = os.getenv(
-    "EMBEDDING_MODEL",
-    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-)
+COSINE_SPACE = "cosine"
 
-CHROMA_PATH = os.getenv(
-    "CHROMA_PATH",
-    "./chroma_db"
-)
 
-CHROMA_COLLECTION = os.getenv(
-    "CHROMA_COLLECTION",
-    "course_material_chunks"
-)
+class VectorServiceError(RuntimeError):
+    """Base error for a vector runtime failure safe to map to a business error."""
 
-_embedding_model: Optional[SentenceTransformer] = None
-_chroma_client = None
-_chroma_collection = None
+
+class CollectionMetricError(VectorServiceError):
+    """The selected collection does not use the required cosine space."""
+
+
+class EmbeddingValidationError(VectorServiceError):
+    """The embedding runtime returned invalid or incompatible vectors."""
+
+
+_runtime_lock = threading.RLock()
+_encode_lock = threading.RLock()
+_embedding_model: SentenceTransformer | None = None
+_embedding_model_name: str | None = None
+_chroma_client: Any | None = None
+_chroma_client_path: str | None = None
+_chroma_collections: dict[str, Any] = {}
 
 
 def get_embedding_model() -> SentenceTransformer:
-    """
-    延迟加载向量模型。
+    """Lazily load and reuse the configured SentenceTransformer safely."""
 
-    只有第一次真正生成向量时才加载模型，
-    避免 FastAPI 启动时立即占用较多时间和内存。
-    """
-    global _embedding_model
+    global _embedding_model, _embedding_model_name
+    settings = get_settings()
+    with _runtime_lock:
+        if _embedding_model is None or _embedding_model_name != settings.embedding_model_name:
+            try:
+                _embedding_model = SentenceTransformer(settings.embedding_model_name)
+            except Exception as exc:  # pragma: no cover - exact library errors vary
+                raise VectorServiceError("向量模型加载失败") from exc
+            _embedding_model_name = settings.embedding_model_name
+        return _embedding_model
 
-    if _embedding_model is None:
-        _embedding_model = SentenceTransformer(
-            EMBEDDING_MODEL_NAME
+
+def _collection_space(collection: Any) -> str | None:
+    configuration = getattr(collection, "configuration", None) or {}
+    if isinstance(configuration, dict):
+        hnsw = configuration.get("hnsw") or {}
+        if isinstance(hnsw, dict) and hnsw.get("space"):
+            return str(hnsw["space"]).lower()
+
+    # Read-only compatibility for collections created with Chroma's legacy
+    # metadata configuration. New 1.1 collections never use this form.
+    metadata = getattr(collection, "metadata", None) or {}
+    if isinstance(metadata, dict) and metadata.get("hnsw:space"):
+        return str(metadata["hnsw:space"]).lower()
+    return None
+
+
+def validate_collection_metric(collection: Any) -> None:
+    """Reject an existing collection unless it is explicitly cosine."""
+
+    space = _collection_space(collection)
+    if space != COSINE_SPACE:
+        name = getattr(collection, "name", "<unknown>")
+        raise CollectionMetricError(
+            f"Chroma collection '{name}' 的距离空间为 {space or 'unknown'}，"
+            "1.1 检索要求显式 cosine；请使用新的 collection 名称重建向量"
         )
 
-    return _embedding_model
+
+def get_chroma_client() -> Any:
+    global _chroma_client, _chroma_client_path, _chroma_collections
+    settings = get_settings()
+    with _runtime_lock:
+        if _chroma_client is None or _chroma_client_path != settings.chroma_path:
+            try:
+                _chroma_client = chromadb.PersistentClient(path=settings.chroma_path)
+            except Exception as exc:  # pragma: no cover - external runtime
+                raise VectorServiceError("ChromaDB 初始化失败") from exc
+            _chroma_client_path = settings.chroma_path
+            _chroma_collections = {}
+        return _chroma_client
 
 
-def get_chroma_collection():
-    """
-    获取本地持久化 Chroma 集合。
-    """
-    global _chroma_client
-    global _chroma_collection
+def get_chroma_collection(*, collection_name: str | None = None) -> Any:
+    """Get/create a collection with Chroma 1.5's explicit cosine config."""
 
-    if _chroma_client is None:
-        _chroma_client = chromadb.PersistentClient(
-            path=CHROMA_PATH
-        )
+    settings = get_settings()
+    name = (collection_name or settings.chroma_collection_name).strip()
+    if not name:
+        raise ValueError("Chroma collection 名称不能为空")
 
-    if _chroma_collection is None:
-        _chroma_collection = (
-            _chroma_client.get_or_create_collection(
-                name=CHROMA_COLLECTION
+    with _runtime_lock:
+        cached = _chroma_collections.get(name)
+        if cached is not None:
+            validate_collection_metric(cached)
+            return cached
+
+        client = get_chroma_client()
+        try:
+            collection = client.get_or_create_collection(
+                name=name,
+                configuration={"hnsw": {"space": COSINE_SPACE}},
             )
-        )
+        except Exception as exc:
+            raise VectorServiceError("ChromaDB collection 获取失败") from exc
+        validate_collection_metric(collection)
+        _chroma_collections[name] = collection
+        return collection
 
-    return _chroma_collection
+
+def validate_unit_vectors(vectors: list[list[float]], *, tolerance: float = 1e-4) -> None:
+    for vector in vectors:
+        norm = math.sqrt(sum(value * value for value in vector))
+        if abs(norm - 1.0) >= tolerance:
+            raise EmbeddingValidationError(f"归一化向量模长异常：{norm:.6f}")
 
 
-def encode_texts(texts: list[str]) -> list[list[float]]:
-    """
-    批量生成文本向量。
+def encode_texts(
+    texts: list[str],
+    *,
+    normalize: bool = True,
+    validate_norms: bool | None = None,
+) -> list[list[float]]:
+    """Encode non-empty text with one model and a validated vector contract."""
 
-    normalize_embeddings=True：
-    对生成的向量进行归一化，使相似度排序更加稳定。
-    """
     if not texts:
         return []
+    if not normalize:
+        raise ValueError("1.1 cosine collection 只接受归一化向量")
+    if any(not isinstance(text, str) or not text.strip() for text in texts):
+        raise ValueError("空字符串或纯空白文本不能生成向量")
 
+    settings = get_settings()
     model = get_embedding_model()
+    try:
+        with _encode_lock:
+            encoded = model.encode(
+                texts,
+                batch_size=settings.embedding_batch_size,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+            )
+    except Exception as exc:  # pragma: no cover - exact library errors vary
+        raise VectorServiceError("文本向量生成失败") from exc
 
-    embeddings = model.encode(
-        texts,
-        batch_size=16,
-        show_progress_bar=False,
-        convert_to_numpy=True,
-        normalize_embeddings=True
+    try:
+        rows = encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
+        vectors = [[float(value) for value in row] for row in rows]
+    except (TypeError, ValueError) as exc:
+        raise EmbeddingValidationError("向量模型返回了无法解析的数据") from exc
+
+    if len(vectors) != len(texts):
+        raise EmbeddingValidationError("向量数量与输入文本数量不一致")
+    dimensions = {len(vector) for vector in vectors}
+    if not dimensions or dimensions == {0} or len(dimensions) != 1:
+        raise EmbeddingValidationError("向量维度为空或不一致")
+    if any(not math.isfinite(value) for vector in vectors for value in vector):
+        raise EmbeddingValidationError("向量包含 NaN 或 Infinity")
+
+    should_validate_norms = (
+        settings.embedding_validate_norms if validate_norms is None else validate_norms
     )
+    if should_validate_norms:
+        validate_unit_vectors(vectors)
+    return vectors
 
-    return embeddings.tolist()
+
+def embedding_version() -> str:
+    model_name = get_settings().embedding_model_name.rsplit("/", 1)[-1]
+    return f"{model_name}_normalized_v1"
 
 
-def delete_material_vectors(material_id: int) -> None:
-    """
-    删除某份资料在 Chroma 中的全部旧向量。
+def delete_material_vectors(
+    *,
+    user_id: int,
+    course_id: int,
+    material_id: int,
+    collection: Any | None = None,
+) -> None:
+    """Delete only the current 1.1 collection's strictly scoped vectors."""
 
-    用于：
-    1. 资料删除；
-    2. 重新解析；
-    3. 重新分块；
-    4. 重新生成向量。
-    """
-    collection = get_chroma_collection()
-
-    collection.delete(
+    if min(user_id, course_id, material_id) < 1:
+        raise ValueError("删除向量需要有效的用户、课程和资料 ID")
+    target = collection or get_chroma_collection()
+    target.delete(
         where={
-            "material_id": material_id
+            "$and": [
+                {"user_id": int(user_id)},
+                {"course_id": int(course_id)},
+                {"material_id": int(material_id)},
+            ]
         }
     )
+
+
+def _metadata_for_chunk(chunk: MaterialChunk, material: Material) -> dict[str, Any]:
+    return {
+        "user_id": int(chunk.user_id),
+        "course_id": int(chunk.course_id),
+        "material_id": int(chunk.material_id),
+        "chunk_id": int(chunk.id),
+        "chunk_index": int(chunk.chunk_index),
+        "page_no": int(chunk.page_no) if chunk.page_no is not None else -1,
+        "file_type": material.file_type or "unknown",
+        "embedding_version": embedding_version(),
+    }
 
 
 def index_material_vectors(
     db: Session,
     *,
-    material: Material
+    material: Material,
+    collection: Any | None = None,
 ) -> int:
-    """
-    为某份资料的全部分块生成向量，并写入 Chroma。
+    """Rebuild one owned material in the active 1.1 cosine collection."""
 
-    返回成功写入的分块数量。
-    """
-
+    if not material.id or not material.user_id or not material.course_id:
+        raise ValueError("资料缺少有效的用户或课程归属")
     chunks = (
         db.query(MaterialChunk)
         .filter(
             MaterialChunk.material_id == material.id,
-            MaterialChunk.user_id == material.user_id
+            MaterialChunk.user_id == material.user_id,
+            MaterialChunk.course_id == material.course_id,
         )
         .order_by(MaterialChunk.chunk_index.asc())
         .all()
     )
-
+    chunks = [chunk for chunk in chunks if (chunk.content or "").strip()]
     if not chunks:
         raise ValueError("该资料没有可向量化的文本分块")
 
-    # 先清理旧向量，避免重新分块后残留旧数据
-    delete_material_vectors(material.id)
-
-    texts = [chunk.content for chunk in chunks]
-
+    target = collection or get_chroma_collection()
+    delete_material_vectors(
+        user_id=material.user_id,
+        course_id=material.course_id,
+        material_id=material.id,
+        collection=target,
+    )
     try:
+        texts = [chunk.content for chunk in chunks]
         embeddings = encode_texts(texts)
-
-        vector_ids = [
-            f"chunk_{chunk.id}"
-            for chunk in chunks
-        ]
-
-        metadatas = []
-
-        for chunk in chunks:
-            metadatas.append(
-                {
-                    "user_id": int(chunk.user_id),
-                    "course_id": int(chunk.course_id),
-                    "material_id": int(chunk.material_id),
-                    "chunk_id": int(chunk.id),
-                    "chunk_index": int(chunk.chunk_index),
-
-                    # Chroma 元数据不保存 None，
-                    # 没有页码时暂时使用 -1
-                    "page_no": (
-                        int(chunk.page_no)
-                        if chunk.page_no is not None
-                        else -1
-                    )
-                }
-            )
-
-        collection = get_chroma_collection()
-
-        # upsert：存在则更新，不存在则新增
-        collection.upsert(
+        vector_ids = [f"chunk_{chunk.id}" for chunk in chunks]
+        target.upsert(
             ids=vector_ids,
             embeddings=embeddings,
             documents=texts,
-            metadatas=metadatas
+            metadatas=[_metadata_for_chunk(chunk, material) for chunk in chunks],
         )
-
         for chunk, vector_id in zip(chunks, vector_ids):
             chunk.vector_id = vector_id
             chunk.vector_status = "success"
-
         db.commit()
-
         return len(chunks)
-
     except Exception:
         db.rollback()
-
-        # 如果过程中失败，删除可能已经写入的部分数据
         try:
-            delete_material_vectors(material.id)
+            delete_material_vectors(
+                user_id=material.user_id,
+                course_id=material.course_id,
+                material_id=material.id,
+                collection=target,
+            )
         except Exception:
             pass
-
         (
             db.query(MaterialChunk)
             .filter(
-                MaterialChunk.material_id == material.id
+                MaterialChunk.material_id == material.id,
+                MaterialChunk.user_id == material.user_id,
+                MaterialChunk.course_id == material.course_id,
             )
             .update(
-                {
-                    MaterialChunk.vector_id: None,
-                    MaterialChunk.vector_status: "failed"
-                },
-                synchronize_session=False
+                {MaterialChunk.vector_id: None, MaterialChunk.vector_status: "failed"},
+                synchronize_session=False,
             )
         )
-
         db.commit()
         raise
 
 
 def index_material_vectors_background(*, material_id: int, user_id: int) -> None:
     """Build vectors after upload using a database session owned by the task."""
+
     db = SessionLocal()
     try:
         material = (
@@ -228,37 +305,38 @@ def index_material_vectors_background(*, material_id: int, user_id: int) -> None
         )
         if material is None:
             return
-
         (
             db.query(MaterialChunk)
             .filter(
                 MaterialChunk.material_id == material_id,
                 MaterialChunk.user_id == user_id,
+                MaterialChunk.course_id == material.course_id,
             )
-            .update(
-                {MaterialChunk.vector_status: "processing"},
-                synchronize_session=False,
-            )
+            .update({MaterialChunk.vector_status: "processing"}, synchronize_session=False)
         )
         db.commit()
         index_material_vectors(db, material=material)
     except Exception:
         db.rollback()
-        (
-            db.query(MaterialChunk)
-            .filter(
-                MaterialChunk.material_id == material_id,
-                MaterialChunk.user_id == user_id,
-            )
-            .update(
-                {
-                    MaterialChunk.vector_id: None,
-                    MaterialChunk.vector_status: "failed",
-                },
-                synchronize_session=False,
-            )
+        material = (
+            db.query(Material)
+            .filter(Material.id == material_id, Material.user_id == user_id)
+            .first()
         )
-        db.commit()
+        if material is not None:
+            (
+                db.query(MaterialChunk)
+                .filter(
+                    MaterialChunk.material_id == material_id,
+                    MaterialChunk.user_id == user_id,
+                    MaterialChunk.course_id == material.course_id,
+                )
+                .update(
+                    {MaterialChunk.vector_id: None, MaterialChunk.vector_status: "failed"},
+                    synchronize_session=False,
+                )
+            )
+            db.commit()
     finally:
         db.close()
 
@@ -269,129 +347,34 @@ def semantic_search(
     user_id: int,
     course_id: int,
     query: str,
-    top_k: int = 5
+    top_k: int = 5,
+    min_similarity: float | None = None,
 ) -> list[dict[str, Any]]:
-    """
-    在指定用户的指定课程中进行语义检索。
-    """
+    """Backward-compatible wrapper around the one canonical retrieval service."""
 
-    query = query.strip()
+    from app.services.course_retrieval_service import retrieve_course_chunks
 
-    if not query:
-        raise ValueError("检索问题不能为空")
-
-    query_embedding = encode_texts([query])[0]
-
-    collection = get_chroma_collection()
-
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=top_k,
-        where={
-            "$and": [
-                {
-                    "user_id": user_id
-                },
-                {
-                    "course_id": course_id
-                }
-            ]
-        },
-        include=[
-            "documents",
-            "metadatas",
-            "distances"
-        ]
-    )
-
-    result_ids = (
-        results.get("ids", [[]])[0]
-        if results.get("ids")
-        else []
-    )
-
-    documents = (
-        results.get("documents", [[]])[0]
-        if results.get("documents")
-        else []
-    )
-
-    metadatas = (
-        results.get("metadatas", [[]])[0]
-        if results.get("metadatas")
-        else []
-    )
-
-    distances = (
-        results.get("distances", [[]])[0]
-        if results.get("distances")
-        else []
-    )
-
-    material_ids = {
-        int(metadata["material_id"])
-        for metadata in metadatas
-        if metadata and "material_id" in metadata
-    }
-
-    materials = (
-        db.query(Material)
-        .filter(
-            Material.id.in_(material_ids),
-            Material.user_id == user_id,
-            Material.course_id == course_id
+    return [
+        item.to_dict()
+        for item in retrieve_course_chunks(
+            db,
+            user_id=user_id,
+            course_id=course_id,
+            query=query,
+            top_k=top_k,
+            min_similarity=min_similarity,
         )
-        .all()
-        if material_ids
-        else []
-    )
+    ]
 
-    material_map = {
-        material.id: material
-        for material in materials
-    }
 
-    search_results = []
+def reset_vector_runtime_for_tests() -> None:
+    """Clear process caches. Tests only; never deletes persistent data."""
 
-    for index, vector_id in enumerate(result_ids):
-        metadata = metadatas[index] or {}
-        # 同时清洗 Chroma 中已经存在的旧文档，用户无需重建索引即可消除
-        # PDF 字体映射失败产生的替换字符和方框。
-        content = normalize_text(documents[index] or "")
-        distance = float(distances[index])
-
-        material_id = int(metadata["material_id"])
-        material = material_map.get(material_id)
-
-        # 距离越小代表越相似。
-        # 转成 0～1 范围内的展示分数。
-        similarity_score = 1.0 / (1.0 + max(distance, 0.0))
-
-        page_no = int(metadata.get("page_no", -1))
-
-        search_results.append(
-            {
-                "vector_id": vector_id,
-                "chunk_id": int(metadata["chunk_id"]),
-                "chunk_index": int(metadata["chunk_index"]),
-                "material_id": material_id,
-                "material_title": (
-                    material.title
-                    if material
-                    else "未知资料"
-                ),
-                "page_no": (
-                    page_no
-                    if page_no >= 0
-                    else None
-                ),
-                "content": content,
-                "distance": round(distance, 6),
-                "similarity_score": round(
-                    similarity_score,
-                    4
-                )
-            }
-        )
-
-    return search_results
+    global _embedding_model, _embedding_model_name
+    global _chroma_client, _chroma_client_path, _chroma_collections
+    with _runtime_lock:
+        _embedding_model = None
+        _embedding_model_name = None
+        _chroma_client = None
+        _chroma_client_path = None
+        _chroma_collections = {}

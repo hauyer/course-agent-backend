@@ -18,6 +18,7 @@ from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
 from app.models.user import User
 from app.services import citation_service
+from app.services.course_retrieval_service import CourseChunkSearchResult
 from app.schemas.agent import AgentChatRequest
 from app.routers import agent as agent_router
 
@@ -160,21 +161,25 @@ def citation_db():
 def test_retrieval_rechecks_user_course_material_and_chunk(monkeypatch, citation_db):
     db, user, course, owned, cross_course, foreign = citation_db
     owned_material, owned_chunk = owned
-    malicious_ids = [
-        owned_chunk.id,
-        owned_chunk.id,
-        cross_course[1].id,
-        foreign[1].id,
-    ]
     monkeypatch.setattr(
         citation_service,
-        "semantic_search",
-        lambda **_: [
-            {
-                "chunk_id": chunk_id,
-                "similarity_score": 0.95 - index * 0.01,
-            }
-            for index, chunk_id in enumerate(malicious_ids)
+        "retrieve_structured_course_chunks",
+        lambda *_args, **_kwargs: [
+            CourseChunkSearchResult(
+                vector_id=f"chunk_{owned_chunk.id}",
+                chunk_id=owned_chunk.id,
+                chunk_index=owned_chunk.chunk_index,
+                course_id=course.id,
+                course_name=course.name,
+                material_id=owned_material.id,
+                material_title=owned_material.title,
+                file_type=owned_material.file_type,
+                page_no=owned_chunk.page_no,
+                content=owned_chunk.content,
+                distance=0.05,
+                similarity_score=0.95,
+                similarity_percent=95.0,
+            )
         ],
     )
     collector = CitationCollector()
@@ -197,7 +202,11 @@ def test_retrieval_rechecks_user_course_material_and_chunk(monkeypatch, citation
 
 def test_no_semantic_results_returns_empty_citations(monkeypatch, citation_db):
     db, user, course, *_ = citation_db
-    monkeypatch.setattr(citation_service, "semantic_search", lambda **_: [])
+    monkeypatch.setattr(
+        citation_service,
+        "retrieve_structured_course_chunks",
+        lambda *_args, **_kwargs: [],
+    )
     assert citation_service.retrieve_course_chunks(
         db,
         user_id=user.id,

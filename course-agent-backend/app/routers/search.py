@@ -18,7 +18,13 @@ from app.services.course_service import get_course_by_id
 from app.services.material_service import get_material_by_id
 from app.services.vector_service import (
     index_material_vectors,
-    semantic_search,
+)
+from app.config import get_settings
+from app.services.course_retrieval_service import (
+    RetrievalNotFoundError,
+    RetrievalUnavailableError,
+    RetrievalValidationError,
+    retrieve_course_chunks,
 )
 
 router = APIRouter()
@@ -70,7 +76,7 @@ def rebuild_material_vectors_api(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"向量生成失败：{exc}"
+            detail="向量生成失败，请稍后重试"
         ) from exc
 
     return {
@@ -106,29 +112,43 @@ def semantic_search_api(
         )
 
     try:
-        results = semantic_search(
-            db=db,
+        structured_results = retrieve_course_chunks(
+            db,
             user_id=current_user.id,
             course_id=search_in.course_id,
             query=search_in.query,
-            top_k=search_in.top_k
+            top_k=search_in.top_k,
+            min_similarity=search_in.min_similarity,
+            material_ids=search_in.material_ids,
+            file_types=search_in.file_types,
         )
-
-    except ValueError as exc:
+        results = [item.to_dict() for item in structured_results]
+    except RetrievalValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc)
         ) from exc
-
-    except Exception as exc:
+    except RetrievalNotFoundError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"语义检索失败：{exc}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except RetrievalUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
         ) from exc
 
+    threshold = (
+        get_settings().semantic_search_min_similarity
+        if search_in.min_similarity is None
+        else search_in.min_similarity
+    )
     return {
         "course_id": search_in.course_id,
         "query": search_in.query,
+        "metric": "cosine",
+        "min_similarity": threshold,
         "total": len(results),
         "results": results
     }

@@ -141,7 +141,11 @@ def delete_material(material_id: int, config: RunnableConfig = None) -> str:
         )
         if material is None:
             return "资料不存在或无权限"
-        delete_material_vectors(material.id)
+        delete_material_vectors(
+            user_id=material.user_id,
+            course_id=material.course_id,
+            material_id=material.id,
+        )
         svc_delete(db=db, material=material)
         return f"资料《{material.title}》已删除"
     except Exception as e:
