@@ -69,10 +69,12 @@ export default function MultiCoursePlanner({
   const [previewRequest, setPreviewRequest] = useState<MultiCoursePlanRequest | null>(null);
   const [requestId, setRequestId] = useState(nextRequestId);
   const [busy, setBusy] = useState<"preview" | "create" | null>(null);
+  const [error, setError] = useState("");
 
   const invalidate = () => {
     setPreview(null);
     setPreviewRequest(null);
+    setError("");
   };
 
   const changeChoice = (courseId: number, patch: Partial<CourseChoice>) => {
@@ -117,13 +119,16 @@ export default function MultiCoursePlanner({
 
   const generatePreview = async () => {
     try {
+      setError("");
       const request = buildRequest();
       setBusy("preview");
       const result = await api.multiPlanPreview(request);
       setPreview(result);
       setPreviewRequest(request);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "预览生成失败");
+      const message = error instanceof Error ? error.message : "预览生成失败";
+      setError(message);
+      notify(message);
     } finally {
       setBusy(null);
     }
@@ -132,13 +137,16 @@ export default function MultiCoursePlanner({
   const confirmCreate = async () => {
     if (!previewRequest) return;
     try {
+      setError("");
       setBusy("create");
       const result = await api.createMultiPlan(previewRequest);
       notify(result.created ? "综合规划已创建" : "该规划已确认，无需重复创建");
       setRequestId(nextRequestId());
       onCreated(result.plan);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "综合规划创建失败");
+      const message = error instanceof Error ? error.message : "综合规划创建失败";
+      setError(message);
+      notify(message);
     } finally {
       setBusy(null);
     }
@@ -324,6 +332,7 @@ export default function MultiCoursePlanner({
           <Sparkles size={16} />
           {busy === "preview" ? "正在计算排程…" : "生成预览"}
         </button>
+        {error && <div className="multi-inline-error"><AlertTriangle size={16} /><span>{error}</span></div>}
       </section>
 
       <section className="multi-preview-panel">

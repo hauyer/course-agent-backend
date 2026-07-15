@@ -230,7 +230,7 @@ export async function request<T = any>(
   try {
     response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
   } catch {
-    throw new Error("无法连接后端服务，请确认 FastAPI 已在 8000 端口启动");
+    throw new Error("无法连接本地后端服务，请稍后重试或重新启动程序");
   }
   if (response.status === 401) {
     localStorage.removeItem("access_token");
@@ -244,9 +244,12 @@ export async function request<T = any>(
   const data = isJson ? await response.json() : await response.text();
   if (!response.ok) {
     const detail = data?.detail;
-    const message = Array.isArray(detail)
+    let message = Array.isArray(detail)
       ? detail.map((x: any) => x.msg).join("；")
       : detail || data || `请求失败（${response.status}）`;
+    if (response.status === 404 && String(message).trim() === "Not Found") {
+      message = "当前桌面端连接到了不兼容的旧后端，请完全退出旧版本后重新打开程序";
+    }
     throw new Error(String(message));
   }
   return data as T;

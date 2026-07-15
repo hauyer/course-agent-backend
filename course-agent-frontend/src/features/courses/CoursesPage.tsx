@@ -19,7 +19,9 @@ export default function CoursesPage({ notify }: { notify: (s: string) => void })
     [keyword, setKeyword] = useState(""),
     [teacher, setTeacher] = useState(""),
     [semester, setSemester] = useState(""),
-    [graphCourse, setGraphCourse] = useState<Entity | null>(null);
+    [graphCourse, setGraphCourse] = useState<Entity | null>(null),
+    [deleteTarget, setDeleteTarget] = useState<Entity | null>(null),
+    [deleting, setDeleting] = useState(false);
   const allCourses = unwrap(data);
   const teachers = useMemo(
     () =>
@@ -162,13 +164,8 @@ export default function CoursesPage({ notify }: { notify: (s: string) => void })
                 </button>
                 <button
                   className="icon-btn danger"
-                  onClick={async () => {
-                    if (confirm(`删除课程“${c.name}”？`)) {
-                      await api.deleteCourse(c.id);
-                      reload();
-                      notify("课程已删除");
-                    }
-                  }}
+                  title="删除课程"
+                  onClick={() => setDeleteTarget(c)}
                 >
                   <Trash2 size={15} />
                 </button>
@@ -227,6 +224,39 @@ export default function CoursesPage({ notify }: { notify: (s: string) => void })
           onClose={() => setGraphCourse(null)}
           notify={notify}
         />
+      )}
+      {deleteTarget && (
+        <Modal title="删除课程" onClose={() => !deleting && setDeleteTarget(null)}>
+          <div className="confirm-dialog danger-confirm">
+            <div className="confirm-symbol"><Trash2 size={22} /></div>
+            <div>
+              <h3>确定删除“{deleteTarget.name}”吗？</h3>
+              <p>与这门课程关联的资料、任务和学习数据可能一并受到影响。此操作无法撤销。</p>
+            </div>
+          </div>
+          <div className="form-actions confirm-actions">
+            <button className="btn subtle" disabled={deleting} onClick={() => setDeleteTarget(null)}>保留课程</button>
+            <button
+              className="btn danger-solid"
+              disabled={deleting}
+              onClick={async () => {
+                setDeleting(true);
+                try {
+                  await api.deleteCourse(deleteTarget.id);
+                  setDeleteTarget(null);
+                  reload();
+                  notify("课程已删除");
+                } catch (error) {
+                  notify(errorText(error));
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              {deleting ? "正在删除…" : "确认删除"}
+            </button>
+          </div>
+        </Modal>
       )}
     </>
   );

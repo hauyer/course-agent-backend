@@ -24,6 +24,7 @@ const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const MAX_PENDING_FILES = 10;
 
 let uploadJobs: UploadJob[] = [];
+const uploadCleanupTimers = new Map<string, number>();
 const uploadListeners = new Set<(jobs: UploadJob[]) => void>();
 function publishUploads() {
   const snapshot = [...uploadJobs];
@@ -31,6 +32,21 @@ function publishUploads() {
 }
 function updateUpload(id: string, patch: Partial<UploadJob>) {
   uploadJobs = uploadJobs.map((job) => job.id === id ? { ...job, ...patch } : job).slice(-50);
+  publishUploads();
+  if (patch.status === "done" && !uploadCleanupTimers.has(id)) {
+    const timer = window.setTimeout(() => {
+      uploadJobs = uploadJobs.filter((job) => job.id !== id);
+      uploadCleanupTimers.delete(id);
+      publishUploads();
+    }, 2200);
+    uploadCleanupTimers.set(id, timer);
+  }
+}
+function removeUpload(id: string) {
+  const timer = uploadCleanupTimers.get(id);
+  if (timer) window.clearTimeout(timer);
+  uploadCleanupTimers.delete(id);
+  uploadJobs = uploadJobs.filter((job) => job.id !== id);
   publishUploads();
 }
 function useUploadJobs() {
@@ -307,6 +323,9 @@ export default function MaterialsPage({ notify }: { notify: (message: string) =>
             <article key={job.id} className={job.status}>
               <div><b>{job.name}</b><span>{job.status === "uploading" ? `上传中 ${job.percent}%` : job.status === "processing" ? "已接收，后台解析中" : job.status === "done" ? "上传完成" : job.error || "上传失败"}</span></div>
               <i><em style={{ width: `${job.percent}%` }} /></i>
+              {(job.status === "done" || job.status === "error") && (
+                <button className="icon-btn" type="button" title="关闭" onClick={() => removeUpload(job.id)}><X size={14} /></button>
+              )}
             </article>
           ))}
         </div>

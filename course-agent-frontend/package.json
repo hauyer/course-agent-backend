@@ -5,9 +5,9 @@
   "description": "课程学习助手桌面端",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
+    "dev": "vite --config vite.config.ts",
+    "build": "tsc -b && vite build --config vite.config.ts",
+    "preview": "vite preview --config vite.config.ts",
     "desktop": "npm run build && electron .",
     "backend:build": "powershell -ExecutionPolicy Bypass -File ../course-agent-backend/build-desktop.ps1",
     "dist": "powershell -ExecutionPolicy Bypass -File ./build-release.ps1"

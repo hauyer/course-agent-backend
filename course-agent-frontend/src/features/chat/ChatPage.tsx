@@ -154,6 +154,8 @@ export default function ChatPage({ notify }: { notify: (s: string) => void }) {
     [streamText, setStreamText] = useState("");
   const keepImmediateResultForSession = useRef<number | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesRef = useRef<HTMLDivElement | null>(null);
+  const followLatest = useRef(true);
   const agentNames: Record<string, string> = {
     course_agent: "课程助手",
     course_agent_node: "课程助手",
@@ -200,12 +202,15 @@ export default function ChatPage({ notify }: { notify: (s: string) => void }) {
     api.messages(sid).then((x: any) => setMessages(hydrateMessages(unwrap(x))));
   }, [sid]);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: busy ? "auto" : "smooth" });
+    if (followLatest.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: busy ? "auto" : "smooth" });
+    }
   }, [messages, busy, activities, streamText]);
   const send = async (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim() || !cid) return;
     const text = input;
+    followLatest.current = true;
     setInput("");
     setMessages((m) => [
       ...m,
@@ -376,7 +381,15 @@ export default function ChatPage({ notify }: { notify: (s: string) => void }) {
         </div>
       </aside>
       <section className="conversation">
-        <div className="messages">
+        <div
+          className="messages"
+          ref={messagesRef}
+          onScroll={() => {
+            const element = messagesRef.current;
+            if (!element) return;
+            followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+          }}
+        >
           {messages.length ? (
             messages.map((m, i) => (
               <div className={`message ${m.role}`} key={m.id || i}>

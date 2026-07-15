@@ -10,7 +10,12 @@ from app.config import get_settings
 from app.models.course import Course
 from app.models.material import Material
 from app.models.material_chunk import MaterialChunk
-from app.services.vector_service import VectorServiceError, encode_texts, get_chroma_collection
+from app.services.vector_service import (
+    VectorServiceError,
+    encode_texts,
+    get_chroma_collection,
+    index_material_vectors,
+)
 from app.utils.file_parser import normalize_text
 
 
@@ -103,6 +108,47 @@ def _build_where(
     return {"$and": clauses}
 
 
+def _rebuild_empty_course_index(
+    db: Session,
+    *,
+    user_id: int,
+    course_id: int,
+    collection: Any,
+) -> int:
+    """Populate the active 1.1 collection for parsed 1.0 materials on demand."""
+
+    materials = (
+        db.query(Material)
+        .join(MaterialChunk, MaterialChunk.material_id == Material.id)
+        .filter(
+            Material.user_id == user_id,
+            Material.course_id == course_id,
+            Material.parse_status == "success",
+            MaterialChunk.user_id == user_id,
+            MaterialChunk.course_id == course_id,
+        )
+        .distinct()
+        .order_by(Material.id.asc())
+        .all()
+    )
+    indexed = 0
+    failures = 0
+    for material in materials:
+        try:
+            indexed += index_material_vectors(db, material=material, collection=collection)
+        except Exception:
+            failures += 1
+            logger.warning(
+                "Failed lazy vector rebuild for user_id=%s course_id=%s material_id=%s",
+                user_id,
+                course_id,
+                material.id,
+            )
+    if failures and not indexed:
+        raise RetrievalUnavailableError("课程资料索引重建失败，请在资料库点击重新建立索引")
+    return indexed
+
+
 def retrieve_course_chunks(
     db: Session,
     *,
@@ -179,7 +225,7 @@ def retrieve_course_chunks(
     try:
         query_embedding = encode_texts([cleaned_query])[0]
         collection = get_chroma_collection()
-        raw = collection.query(
+        query_kwargs = dict(
             query_embeddings=[query_embedding],
             n_results=candidate_k,
             where=_build_where(
@@ -190,6 +236,16 @@ def retrieve_course_chunks(
             ),
             include=["documents", "metadatas", "distances"],
         )
+        raw = collection.query(**query_kwargs)
+        if not _first_row(raw.get("ids")):
+            rebuilt = _rebuild_empty_course_index(
+                db,
+                user_id=user_id,
+                course_id=course_id,
+                collection=collection,
+            )
+            if rebuilt:
+                raw = collection.query(**query_kwargs)
     except VectorServiceError as exc:
         raise RetrievalUnavailableError("语义检索服务暂不可用") from exc
     except Exception as exc:
@@ -282,4 +338,3 @@ def retrieve_course_chunks(
         if len(output) >= top_k:
             break
     return output
-

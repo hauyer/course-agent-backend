@@ -38,6 +38,7 @@ import {
   Settings2,
   Sparkles,
   Target,
+  TriangleAlert,
   Trash2,
   Upload,
   X,
@@ -553,6 +554,7 @@ function UserSettings({
   const [backupBusy, setBackupBusy] = useState<"export" | "import" | "">("");
   const [backupProgress, setBackupProgress] = useState(0);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [verifiedPassword, setVerifiedPassword] = useState("");
   const [provider, setProvider] = useState("openai");
   const llmConfig = useData<Entity>(() => api.llmConfig(), []);
@@ -560,13 +562,13 @@ function UserSettings({
   const updateAvatar = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = event.currentTarget;
-    const file = new FormData(form).get("avatar");
-    if (!(file instanceof File) || !file.size) return;
+    if (!avatarFile?.size) return;
     setAvatarBusy(true);
     try {
-      const nextUser: any = await api.updateAvatar(file);
+      const nextUser: any = await api.updateAvatar(avatarFile);
       onUserUpdated(nextUser);
       form.reset();
+      setAvatarFile(null);
       notify("头像已更新");
     } catch (error) {
       notify(errorText(error));
@@ -749,8 +751,18 @@ function UserSettings({
             </div>
           </div>
           <form className="avatar-actions" onSubmit={updateAvatar}>
-            <input name="avatar" type="file" accept="image/jpeg,image/png,image/webp" required />
-            <button className="btn subtle" disabled={avatarBusy}>
+            <label className="avatar-file-picker">
+              选择图片
+              <input
+                name="avatar"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                required
+                onChange={(event) => setAvatarFile(event.target.files?.[0] || null)}
+              />
+            </label>
+            <span className="avatar-file-name">{avatarFile?.name || "支持 JPG、PNG、WebP，最大 4 MB"}</span>
+            <button className="btn subtle" disabled={avatarBusy || !avatarFile}>
               {avatarBusy ? "正在处理…" : "上传头像"}
             </button>
             {user?.avatar_data && (
@@ -804,6 +816,12 @@ function UserSettings({
                 : "使用系统模型"}
             </span>
           </div>
+          {llmConfig.data?.invalid && (
+            <div className="model-config-warning">
+              <TriangleAlert size={15} />
+              <span>{llmConfig.data.error_message || "模型密钥已失效，请重新验证并接入"}</span>
+            </div>
+          )}
           <div className="model-steps">
             <form className="model-step" onSubmit={verifyModelIdentity}>
               <span className="step-number">01</span>
@@ -1245,6 +1263,17 @@ function KnowledgeSearch() {
     [busy, setBusy] = useState(false),
     [err, setErr] = useState("");
   const results: SemanticSearchItem[] = response?.results || [];
+  const finiteNumber = (value: unknown, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const similarityPercent = (item: SemanticSearchItem) => {
+    const legacy = item as SemanticSearchItem & { score?: number };
+    return finiteNumber(
+      item.similarity_percent,
+      finiteNumber(item.similarity_score, finiteNumber(legacy.score)) * 100,
+    );
+  };
   const run = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -1255,7 +1284,11 @@ function KnowledgeSearch() {
         query: q,
         top_k: 10,
       });
-      setResponse(r);
+      setResponse({
+        ...r,
+        min_similarity: finiteNumber(r?.min_similarity, 0.35),
+        results: Array.isArray(r?.results) ? r.results : [],
+      });
     } catch (x) {
       setErr(errorText(x));
     } finally {
@@ -1299,7 +1332,7 @@ function KnowledgeSearch() {
             {results.length
               ? `${results.length} 条依据 · 余弦相似度越高越相关`
               : response
-                ? `阈值 ${Math.round(response.min_similarity * 100)}%`
+                ? `阈值 ${Math.round(finiteNumber(response.min_similarity, 0.35) * 100)}%`
                 : "等待检索"}
           </span>
         </div>
@@ -1315,12 +1348,12 @@ function KnowledgeSearch() {
                     <b>{r.material_title}</b>
                     <span>
                       {r.page_no ? `第 ${r.page_no} 页 · ` : ""}余弦相似度{" "}
-                      {Number(r.similarity_percent).toFixed(2)}%
+                      {similarityPercent(r).toFixed(2)}%
                     </span>
                   </div>
                   <p>{r.content}</p>
                   <small className="retrieval-metric">
-                    片段 {r.chunk_index} · 余弦距离 {r.distance.toFixed(4)}
+                    片段 {finiteNumber(r.chunk_index) + 1} · 余弦距离 {finiteNumber(r.distance, 1).toFixed(4)}
                   </small>
                 </div>
               </article>

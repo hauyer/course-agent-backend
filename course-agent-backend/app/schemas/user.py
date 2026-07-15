@@ -35,6 +35,8 @@ class LlmConfigUpdate(BaseModel):
 class LlmConfigResponse(BaseModel):
     configured: bool
     enabled: bool
+    invalid: bool = False
+    error_message: Optional[str] = None
     provider: Optional[str] = None
     model_name: Optional[str] = None
     base_url: Optional[str] = None

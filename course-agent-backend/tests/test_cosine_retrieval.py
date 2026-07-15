@@ -354,6 +354,66 @@ def test_retrieval_keeps_order_and_caps_top_k(monkeypatch, search_db):
     assert [item.chunk_id for item in results] == [items[0][1].id]
 
 
+def test_empty_new_collection_rebuilds_existing_course_vectors_and_retries(
+    monkeypatch, search_db
+):
+    db, alice, _bob, course, _db_course, owned_a, _owned_b, *_ = search_db
+    material, chunk = owned_a
+    collection = FakeCollection()
+    calls = 0
+
+    def query(**kwargs):
+        nonlocal calls
+        collection.queries.append(kwargs)
+        calls += 1
+        if calls == 1:
+            return {"ids": [[]], "metadatas": [[]], "distances": [[]], "documents": [[]]}
+        return {
+            "ids": [[f"chunk_{chunk.id}"]],
+            "metadatas": [[metadata(alice, course, material, chunk)]],
+            "distances": [[0.15]],
+            "documents": [["untrusted"]],
+        }
+
+    collection.query = query
+    install_retrieval_fakes(monkeypatch, collection)
+    rebuilt = []
+    monkeypatch.setattr(
+        course_retrieval_service,
+        "_rebuild_empty_course_index",
+        lambda *_args, **_kwargs: rebuilt.append(course.id) or 1,
+    )
+
+    results = retrieve_course_chunks(
+        db, user_id=alice.id, course_id=course.id, query="进程", top_k=3
+    )
+
+    assert rebuilt == [course.id]
+    assert len(collection.queries) == 2
+    assert [item.chunk_id for item in results] == [chunk.id]
+
+
+def test_course_index_rebuild_is_scoped_to_owned_parsed_materials(monkeypatch, search_db):
+    db, alice, _bob, course, _db_course, owned_a, owned_b, *_ = search_db
+    expected_ids = {owned_a[0].id, owned_b[0].id}
+    indexed_ids = []
+    monkeypatch.setattr(
+        course_retrieval_service,
+        "index_material_vectors",
+        lambda _db, *, material, collection: indexed_ids.append(material.id) or 1,
+    )
+
+    count = course_retrieval_service._rebuild_empty_course_index(
+        db,
+        user_id=alice.id,
+        course_id=course.id,
+        collection=object(),
+    )
+
+    assert count == len(expected_ids)
+    assert set(indexed_ids) == expected_ids
+
+
 def test_citation_collector_uses_same_structured_result_and_no_low_evidence(monkeypatch):
     accepted = CourseChunkSearchResult(
         vector_id="chunk_7",

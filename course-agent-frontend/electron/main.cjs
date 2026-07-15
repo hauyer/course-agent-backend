@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell } = require("electron");
 const { spawn, spawnSync } = require("child_process");
 const http = require("http");
+const net = require("net");
 const fs = require("fs");
 const path = require("path");
 const {
@@ -13,7 +14,8 @@ const {
 let server;
 let backendProcess;
 let backendStarting;
-const backendPort = 8000;
+let backendPort = 0;
+const expectedBackendVersion = "1.1.0";
 const mime = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -50,6 +52,7 @@ function readJson(req) {
 }
 
 function healthCheck() {
+  if (!backendPort) return Promise.resolve(false);
   return new Promise((resolve) => {
     const request = http.get(
       { hostname: "127.0.0.1", port: backendPort, path: "/health", timeout: 1200 },
@@ -60,7 +63,11 @@ function healthCheck() {
         response.on("end", () => {
           try {
             const value = JSON.parse(body);
-            resolve(response.statusCode === 200 && value.app === "course-study-desk");
+            resolve(
+              response.statusCode === 200
+              && value.app === "course-study-desk"
+              && value.version === expectedBackendVersion,
+            );
           } catch {
             resolve(false);
           }
@@ -69,6 +76,19 @@ function healthCheck() {
     );
     request.on("timeout", () => request.destroy());
     request.on("error", () => resolve(false));
+  });
+}
+
+function reserveBackendPort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      probe.close((error) => error ? reject(error) : resolve(port));
+    });
   });
 }
 
@@ -236,6 +256,7 @@ function ensureLocalConfigTemplate() {
 
 app.whenReady().then(async () => {
   ensureLocalConfigTemplate();
+  backendPort = await reserveBackendPort();
   const win = new BrowserWindow({
     width: 1440,
     height: 900,

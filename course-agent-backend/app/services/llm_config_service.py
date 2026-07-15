@@ -16,6 +16,14 @@ _active_llm_runtime: ContextVar[dict | None] = ContextVar(
 )
 
 
+class LlmConfigurationInvalidError(RuntimeError):
+    """The saved user key cannot be decrypted with the current local secret."""
+
+
+def _invalid_config_message() -> str:
+    return "已保存的大模型密钥无法解密，请在设置中验证密码并重新接入 API"
+
+
 def verify_current_password(*, user: User, current_password: str) -> None:
     if not verify_password(current_password, user.password_hash):
         raise ValueError("当前密码不正确")
@@ -92,15 +100,31 @@ def serialize_llm_config(config: LlmConfig | None) -> dict:
         return {
             "configured": False,
             "enabled": False,
+            "invalid": False,
+            "error_message": None,
             "provider": None,
             "model_name": None,
             "base_url": None,
             "api_key_hint": None,
         }
-    key = decrypt_secret(config.api_key_encrypted)
+    try:
+        key = decrypt_secret(config.api_key_encrypted)
+    except RuntimeError:
+        return {
+            "configured": False,
+            "enabled": False,
+            "invalid": True,
+            "error_message": _invalid_config_message(),
+            "provider": config.provider,
+            "model_name": config.model_name,
+            "base_url": config.base_url,
+            "api_key_hint": None,
+        }
     return {
         "configured": True,
         "enabled": bool(config.enabled),
+        "invalid": False,
+        "error_message": None,
         "provider": config.provider,
         "model_name": config.model_name,
         "base_url": config.base_url,
@@ -114,11 +138,15 @@ def load_user_llm_runtime(user_id: int) -> dict | None:
         config = get_llm_config(db, user_id=user_id)
         if config is None or not config.enabled:
             return None
+        try:
+            api_key = decrypt_secret(config.api_key_encrypted)
+        except RuntimeError as exc:
+            raise LlmConfigurationInvalidError(_invalid_config_message()) from exc
         return {
             "provider": config.provider,
             "model_name": config.model_name,
             "base_url": config.base_url,
-            "api_key": decrypt_secret(config.api_key_encrypted),
+            "api_key": api_key,
         }
     finally:
         db.close()

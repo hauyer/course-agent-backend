@@ -119,7 +119,7 @@ def create_knowledge_graph_job(
     if has_chunk is None:
         raise ValueError("当前课程没有可用于生成图谱的资料片段")
     llm_config = (
-        db.query(LlmConfig.id)
+        db.query(LlmConfig)
         .filter(LlmConfig.user_id == user_id, LlmConfig.enabled.is_(True))
         .first()
     )

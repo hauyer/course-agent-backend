@@ -63,6 +63,20 @@ app = FastAPI(
 )
 
 
+def _json_safe(value):
+    """Keep validation diagnostics useful without leaking or serializing raw bodies."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        return f"<binary payload: {len(value)} bytes>"
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return str(value)
+
+
 @app.middleware("http")
 async def trace_and_audit_request(request: Request, call_next):
     trace_id = request.headers.get("x-trace-id") or uuid4().hex
@@ -91,7 +105,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         status_code=422,
         content={
             "detail": "请求参数不符合要求",
-            "errors": exc.errors(),
+            "errors": _json_safe(exc.errors()),
             "trace_id": getattr(request.state, "trace_id", None),
         },
     )
@@ -230,6 +244,7 @@ def health_check():
     return {
         "status": "ok",
         "app": "course-study-desk",
+        "version": "1.1.0",
     }
 
 

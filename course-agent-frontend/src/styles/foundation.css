@@ -180,15 +180,87 @@ button {
 }
 
 .avatar-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto auto;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
   margin-top: 16px;
 }
 
 .avatar-actions input[type="file"] {
-  flex: 1 1 260px;
+  display: none;
+}
+.profile-setting .setting-heading {
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 15px;
+  align-items: center;
+}
+.profile-setting .setting-heading > div:last-child {
+  min-width: 0;
+}
+.avatar-file-picker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 15px;
+  border: 1px solid #aeb9ae;
+  border-radius: 8px;
+  background: #f7f9f6;
+  color: #465449;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: .16s ease;
+}
+.avatar-file-picker:hover {
+  background: #edf2eb;
+  border-color: #879889;
+}
+.avatar-file-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-config-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 0 0 37px;
+  padding: 10px 12px;
+  border: 1px solid #e5bcb3;
+  border-radius: 9px;
+  background: #fff7f4;
+  color: #9e5045;
+  font-size: 11px;
+}
+.confirm-dialog {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 15px;
+  align-items: start;
+  padding: 22px 22px 8px;
+}
+.confirm-symbol {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff0ec;
+  color: #b55245;
+}
+.confirm-dialog h3 { margin: 1px 0 7px; font-size: 17px; }
+.confirm-dialog p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.confirm-actions { padding: 18px 22px 22px; }
+.btn.danger-solid { background: #a94f43; border-color: #a94f43; color: #fff; }
+.btn.danger-solid:hover { background: #913f35; border-color: #913f35; }
+@media (max-width: 720px) {
+  .avatar-actions { grid-template-columns: 1fr auto; }
+  .avatar-file-name { grid-column: 1 / -1; grid-row: 2; }
 }
 .rail-user b,
 .rail-user small {

@@ -1,8 +1,9 @@
 .multi-planner {
-  display: grid;
-  grid-template-columns: minmax(460px, .9fr) minmax(520px, 1.1fr);
+  display: flex;
+  flex-direction: column;
   gap: 22px;
-  align-items: start;
+  max-width: 1180px;
+  margin: 0 auto;
 }
 
 .multi-planner-form,
@@ -14,7 +15,7 @@
 }
 
 .multi-planner-form { padding: 24px; }
-.multi-preview-panel { min-height: 640px; padding: 22px; }
+.multi-preview-panel { min-height: 180px; padding: 22px; }
 
 .multi-section-heading {
   display: flex;
@@ -101,7 +102,7 @@
 .course-settings select { min-width: 0; padding: 9px 10px; }
 .multi-preview-button { width: 100%; justify-content: center; margin-top: 18px; }
 
-.multi-preview-empty { min-height: 590px; display: grid; place-content: center; justify-items: center; gap: 9px; color: #849087; text-align: center; }
+.multi-preview-empty { min-height: 150px; display: grid; place-content: center; justify-items: center; gap: 9px; color: #849087; text-align: center; }
 .multi-preview-empty b { color: #435046; font-size: 17px; }
 .capacity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .capacity-grid > div { display: grid; grid-template-columns: auto 1fr; gap: 5px 8px; border: 1px solid #e0e5df; border-radius: 13px; padding: 13px; }
@@ -139,6 +140,7 @@
 .multi-confirm-bar { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 12px; padding-top: 18px; border-top: 1px solid #e0e5df; }
 .multi-confirm-bar > div { display: grid; gap: 3px; }
 .multi-confirm-bar span { color: #7a857c; font-size: 12px; }
+.multi-inline-error { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; padding: 11px 13px; border: 1px solid #e5bdb5; border-radius: 11px; background: #fff7f4; color: #a45145; font-size: 12px; }
 
 .regeneration-preview { padding: 22px; }
 .regeneration-note { display: flex; align-items: center; gap: 9px; margin: 0 0 18px; padding: 12px 14px; border-radius: 11px; background: #edf2eb; color: #566a58; }
@@ -153,9 +155,8 @@
 .regeneration-days p b { color: #536055; }
 
 @media (max-width: 1260px) {
-  .multi-planner { grid-template-columns: 1fr; }
-  .multi-preview-panel { min-height: 480px; }
-  .multi-preview-empty { min-height: 420px; }
+  .multi-preview-panel { min-height: 180px; }
+  .multi-preview-empty { min-height: 150px; }
 }
 
 @media (max-width: 760px) {
