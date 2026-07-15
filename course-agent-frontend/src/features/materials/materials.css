@@ -27,3 +27,15 @@
 }
 
 .upload-queue{display:grid;gap:8px;margin:0 0 14px}.upload-queue article{display:grid;grid-template-columns:minmax(180px,1fr) minmax(120px,.6fr);align-items:center;gap:18px;padding:10px 13px;border:1px solid #d9dfd8;border-radius:9px;background:#fff}.upload-queue article>div{display:flex;align-items:center;justify-content:space-between;gap:16px;min-width:0}.upload-queue b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.upload-queue span{flex:0 0 auto;color:#778077;font-size:12px}.upload-queue i{height:5px;overflow:hidden;border-radius:99px;background:#e5e9e4}.upload-queue em{display:block;height:100%;border-radius:inherit;background:#778e79;transition:width .18s ease}.upload-queue .processing em,.upload-queue .done em{width:100%!important}.upload-queue .error{border-color:#e6c8c2;background:#fff8f6}.upload-queue .error em{background:#b65d52}@media(max-width:760px){.upload-queue article{grid-template-columns:1fr}.upload-queue article>div{align-items:flex-start;flex-direction:column;gap:4px}}
+
+.pending-upload-panel { margin: 0 0 14px; padding: 14px; border: 1px solid #cfd8cf; border-radius: 13px; background: #f7f9f6; box-shadow: 0 7px 20px rgba(48, 65, 50, .05); }
+.pending-upload-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
+.pending-upload-panel > header > div { display: flex; align-items: center; gap: 8px; }
+.pending-upload-panel > header span { color: #7a857c; font-size: 12px; }
+.pending-upload-panel > div { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 8px; }
+.pending-upload-panel article { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 11px; border: 1px solid #dee4dd; border-radius: 10px; background: #fff; }
+.pending-upload-panel article > svg { color: #687a6a; }
+.pending-upload-panel article > div { display: grid; min-width: 0; gap: 3px; }
+.pending-upload-panel article b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.pending-upload-panel article span { color: #818b83; font-size: 11px; }
+.pending-state { display: inline-flex; align-items: center; gap: 5px; color: #667a68 !important; }

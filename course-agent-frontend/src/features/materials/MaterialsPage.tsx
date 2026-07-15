@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { CircleHelp, FileText, Library, RefreshCw, Trash2, Upload, X } from "lucide-react";
+import { CircleHelp, FileText, Files, Library, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import { api, type Entity } from "../../api";
 import "./materials.css";
 
@@ -12,6 +12,17 @@ type UploadJob = {
   error?: string;
 };
 
+type PendingFile = {
+  id: string;
+  courseId: number;
+  file: File;
+  status: "ready" | "uploading";
+};
+
+const ACCEPTED_EXTENSIONS = new Set(["pdf", "docx", "pptx", "txt", "md"]);
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_PENDING_FILES = 10;
+
 let uploadJobs: UploadJob[] = [];
 const uploadListeners = new Set<(jobs: UploadJob[]) => void>();
 function publishUploads() {
@@ -19,7 +30,7 @@ function publishUploads() {
   uploadListeners.forEach((listener) => listener(snapshot));
 }
 function updateUpload(id: string, patch: Partial<UploadJob>) {
-  uploadJobs = uploadJobs.map((job) => job.id === id ? { ...job, ...patch } : job).slice(-5);
+  uploadJobs = uploadJobs.map((job) => job.id === id ? { ...job, ...patch } : job).slice(-50);
   publishUploads();
 }
 function useUploadJobs() {
@@ -31,41 +42,127 @@ function useUploadJobs() {
   }, []);
   return jobs;
 }
-async function watchProcessing(jobId: string, courseId: number, materialId: number) {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    try {
-      const materials: any = await api.materials(courseId);
-      const material = unwrap(materials).find((item) => Number(item.id) === Number(materialId));
-      if (material?.parse_status === "success") {
-        updateUpload(jobId, { status: "done", percent: 100 });
-        return;
-      }
-      if (material?.parse_status === "failed") {
-        updateUpload(jobId, { status: "error", error: material.parse_error || "资料解析失败" });
-        return;
-      }
-    } catch {
-      // 页面切换或短暂断网不会中止后台任务，下一轮继续确认状态。
-    }
-  }
-  updateUpload(jobId, { status: "processing", error: "后台仍在处理，可稍后刷新资料列表查看" });
+
+let pendingFiles: PendingFile[] = [];
+const pendingListeners = new Set<(files: PendingFile[]) => void>();
+function publishPending() {
+  const snapshot = [...pendingFiles];
+  pendingListeners.forEach((listener) => listener(snapshot));
 }
-async function startUpload(courseId: number, form: FormData) {
-  const file = form.get("file") as File;
+function usePendingFiles() {
+  const [files, setFiles] = useState<PendingFile[]>(pendingFiles);
+  useEffect(() => {
+    pendingListeners.add(setFiles);
+    setFiles([...pendingFiles]);
+    return () => { pendingListeners.delete(setFiles); };
+  }, []);
+  return files;
+}
+function updatePending(id: string, patch: Partial<PendingFile>) {
+  pendingFiles = pendingFiles.map((item) => item.id === id ? { ...item, ...patch } : item);
+  publishPending();
+}
+function removePending(id: string) {
+  pendingFiles = pendingFiles.filter((item) => item.id !== id);
+  publishPending();
+}
+function addPendingFiles(courseId: number, incoming: File[]) {
+  const errors: string[] = [];
+  for (const file of incoming) {
+    if (pendingFiles.length >= MAX_PENDING_FILES) {
+      errors.push(`一次最多确认 ${MAX_PENDING_FILES} 个文件`);
+      break;
+    }
+    const extension = file.name.split(".").pop()?.toLowerCase() || "";
+    if (!ACCEPTED_EXTENSIONS.has(extension)) {
+      errors.push(`${file.name}：不支持该文件类型`);
+      continue;
+    }
+    if (!file.size) {
+      errors.push(`${file.name}：不能上传空文件`);
+      continue;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      errors.push(`${file.name}：超过 20 MB`);
+      continue;
+    }
+    const duplicate = pendingFiles.some(
+      (item) => item.courseId === courseId
+        && item.file.name === file.name
+        && item.file.size === file.size
+        && item.file.lastModified === file.lastModified,
+    );
+    if (duplicate) {
+      errors.push(`${file.name}：已经在待上传清单中`);
+      continue;
+    }
+    pendingFiles.push({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      courseId,
+      file,
+      status: "ready",
+    });
+  }
+  publishPending();
+  return errors;
+}
+
+const processingByCourse = new Map<number, Map<number, string>>();
+const activeCourseWatchers = new Set<number>();
+function watchProcessing(courseId: number, materialId: number, jobId: string) {
+  const materials = processingByCourse.get(courseId) || new Map<number, string>();
+  materials.set(materialId, jobId);
+  processingByCourse.set(courseId, materials);
+  if (activeCourseWatchers.has(courseId)) return;
+  activeCourseWatchers.add(courseId);
+  void (async () => {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const pending = processingByCourse.get(courseId);
+      if (!pending?.size) break;
+      try {
+        const materialsResponse: any = await api.materials(courseId);
+        const current = unwrap(materialsResponse);
+        for (const [currentMaterialId, currentJobId] of [...pending.entries()]) {
+          const material = current.find((item) => Number(item.id) === currentMaterialId);
+          if (material?.parse_status === "success") {
+            updateUpload(currentJobId, { status: "done", percent: 100 });
+            pending.delete(currentMaterialId);
+          } else if (material?.parse_status === "failed") {
+            updateUpload(currentJobId, { status: "error", error: material.parse_error || "资料解析失败" });
+            pending.delete(currentMaterialId);
+          }
+        }
+      } catch {
+        // 页面切换或短暂断网不会中止后台任务，下一轮继续确认状态。
+      }
+    }
+    const unfinished = processingByCourse.get(courseId);
+    unfinished?.forEach((currentJobId) => {
+      updateUpload(currentJobId, { status: "processing", error: "后台仍在处理，可稍后刷新资料列表查看" });
+    });
+    processingByCourse.delete(courseId);
+    activeCourseWatchers.delete(courseId);
+  })();
+}
+
+async function startUpload(courseId: number, file: File, title?: string) {
+  const form = new FormData();
+  form.set("file", file);
+  if (title?.trim()) form.set("title", title.trim());
   const id = `${Date.now()}-${Math.random()}`;
   const job: UploadJob = {
     id,
-    name: file?.name || "课程资料",
+    name: file.name || "课程资料",
     percent: 0,
     status: "uploading",
   };
-  uploadJobs = [...uploadJobs, job].slice(-5);
+  uploadJobs = [...uploadJobs, job].slice(-50);
   publishUploads();
   try {
     const result: any = await api.uploadMaterial(courseId, form, (percent) => updateUpload(id, { percent }));
     updateUpload(id, { percent: 100, status: "processing" });
-    void watchProcessing(id, courseId, Number(result.id));
+    watchProcessing(courseId, Number(result.id), id);
     return result;
   } catch (error) {
     updateUpload(id, { status: "error", error: errorText(error) });
@@ -87,7 +184,9 @@ export default function MaterialsPage({ notify }: { notify: (message: string) =>
   const courses = useData(() => api.courses(), []),
     [cid, setCid] = useState<number>(0),
     [view, setView] = useState<Entity | null>(null),
-    jobs = useUploadJobs();
+    [title, setTitle] = useState(""),
+    jobs = useUploadJobs(),
+    selectedFiles = usePendingFiles();
   useEffect(() => {
     if (!cid && courses.data?.[0]) setCid(courses.data[0].id);
   }, [courses.data, cid]);
@@ -100,14 +199,32 @@ export default function MaterialsPage({ notify }: { notify: (message: string) =>
     .find((line) => line.includes("文本质量提示"));
   const upload = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const form = new FormData(e.currentTarget);
-    try {
-      await startUpload(cid, form);
-      notify("文件上传完成，解析与向量化将在后台继续");
+    const ready = selectedFiles.filter((item) => item.status === "ready");
+    if (!ready.length) return;
+    ready.forEach((item) => updatePending(item.id, { status: "uploading" }));
+    let cursor = 0;
+    let succeeded = 0;
+    let failed = 0;
+    const worker = async () => {
+      while (cursor < ready.length) {
+        const item = ready[cursor++];
+        try {
+          await startUpload(item.courseId, item.file, ready.length === 1 ? title : undefined);
+          removePending(item.id);
+          succeeded += 1;
+        } catch {
+          updatePending(item.id, { status: "ready" });
+          failed += 1;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, ready.length) }, worker));
+    if (succeeded) {
+      notify(`${succeeded} 个文件已上传，解析与向量化将在后台继续${failed ? `；${failed} 个失败，可重试` : ""}`);
+      setTitle("");
       mats.reload();
-      (e.target as HTMLFormElement).reset();
-    } catch (x) {
-      notify(errorText(x));
+    } else {
+      notify("文件上传失败，请查看上传队列中的错误信息");
     }
   };
   if (courses.loading) return <Loading error={courses.error} />;
@@ -122,20 +239,68 @@ export default function MaterialsPage({ notify }: { notify: (message: string) =>
           onChange={(v) => setCid(Number(v))}
         />
         <form className="upload-inline" onSubmit={upload}>
-          <input name="title" placeholder="资料标题（选填）" />
+          <input
+            name="title"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder={selectedFiles.length > 1 ? "多文件将使用各自文件名" : "资料标题（选填）"}
+            disabled={selectedFiles.length > 1}
+          />
           <label className="file-btn">
             <Upload size={15} />
-            选择文件
+            选择文件{selectedFiles.length ? ` (${selectedFiles.length})` : ""}
             <input
               name="file"
               type="file"
               accept=".pdf,.docx,.pptx,.txt,.md"
-              required
+              multiple
+              onChange={(event) => {
+                const errors = addPendingFiles(cid, Array.from(event.target.files || []));
+                if (errors.length) notify(errors.slice(0, 3).join("；"));
+                event.target.value = "";
+              }}
             />
           </label>
-          <button className="btn primary" disabled={jobs.some((job) => job.status === "uploading")}>上传</button>
+          <button
+            className="btn primary"
+            disabled={
+              !selectedFiles.some((item) => item.status === "ready")
+              || selectedFiles.some((item) => item.status === "uploading")
+            }
+          >
+            上传 {selectedFiles.filter((item) => item.status === "ready").length || ""}
+          </button>
         </form>
       </div>
+      {selectedFiles.length > 0 && (
+        <div className="pending-upload-panel">
+          <header>
+            <div><Files size={17} /><b>确认待上传文件</b></div>
+            <span>最多 10 个，上传时并行处理 3 个</span>
+          </header>
+          <div>
+            {selectedFiles.map((item) => {
+              const course = courses.data?.find((value) => value.id === item.courseId);
+              return (
+                <article key={item.id}>
+                  <FileText size={17} />
+                  <div>
+                    <b>{item.file.name}</b>
+                    <span>{course?.name || "未知课程"} · {(item.file.size / 1024 / 1024).toFixed(2)} MB</span>
+                  </div>
+                  {item.status === "uploading" ? (
+                    <span className="pending-state"><RefreshCw className="spin" size={13} />正在上传</span>
+                  ) : (
+                    <button type="button" className="icon-btn" title="移出清单" onClick={() => removePending(item.id)}>
+                      <X size={15} />
+                    </button>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {jobs.length > 0 && (
         <div className="upload-queue" aria-live="polite">
           {jobs.map((job) => (
@@ -148,7 +313,7 @@ export default function MaterialsPage({ notify }: { notify: (message: string) =>
       )}
       <div className="hint">
         <CircleHelp size={15} />
-        支持 PDF、Word、PPT、TXT、Markdown，单个文件不超过 20 MB。
+        支持一次选择多个 PDF、Word、PPT、TXT、Markdown；单个文件不超过 20 MB。
       </div>
       {mats.loading ? (
         <Loading />
