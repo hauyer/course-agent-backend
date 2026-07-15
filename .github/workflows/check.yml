@@ -21,7 +21,7 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-  backend-syntax:
+  backend:
     runs-on: windows-latest
     defaults:
       run:
@@ -31,4 +31,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            course-agent-backend/requirements.txt
+            course-agent-backend/requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
       - run: python -m compileall -q app
+      - run: python -m pytest -q
