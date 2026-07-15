@@ -1,4 +1,5 @@
 from sqlalchemy import (
+    JSON,
     Column,
     Date,
     DateTime,
@@ -7,6 +8,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.sql import func
 
@@ -19,6 +21,11 @@ class StudyPlan(Base):
     __tablename__ = "study_plans"
 
     __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "client_request_id",
+            name="uq_study_plans_user_request",
+        ),
         Index(
             "ix_study_plans_user_status",
             "user_id",
@@ -99,4 +106,31 @@ class StudyPlan(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+    # single、multi；旧数据迁移后统一为 single。
+    plan_type = Column(
+        String(20),
+        nullable=False,
+        default="single",
+        index=True,
+    )
+
+    # 综合规划重新生成的乐观锁版本。
+    version = Column(
+        Integer,
+        nullable=False,
+        default=1,
+    )
+
+    # 客户端确认请求幂等键；单课程旧接口保持为空。
+    client_request_id = Column(
+        String(64),
+        nullable=True,
+    )
+
+    available_weekdays = Column(
+        JSON,
+        nullable=False,
+        default=lambda: [1, 2, 3, 4, 5, 6, 7],
     )

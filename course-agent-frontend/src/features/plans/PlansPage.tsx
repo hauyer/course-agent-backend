@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check, Library, Plus, RefreshCw, Settings2, Sparkles, Trash2, X } from "lucide-react";
-import { api, type Entity } from "../../api";
+import { AlertTriangle, Check, Library, Plus, RefreshCw, RotateCcw, Settings2, Sparkles, Trash2, X } from "lucide-react";
+import { api, type Entity, type MultiCoursePlanPreview } from "../../api";
+import MultiCoursePlanner from "./MultiCoursePlanner";
 
 const labels:Record<string,string>={draft:"草稿",active:"进行中",paused:"已暂停",completed:"已完成",pending:"待开始",in_progress:"进行中",cancelled:"已取消"};
 function unwrap(data:any):Entity[]{return Array.isArray(data)?data:data?.items||[]}
@@ -184,7 +185,8 @@ export default function PlansPage({ notify }: { notify: (s: string) => void }) {
     plans = useData(() => api.plans(), []),
     [edit, setEdit] = useState<Entity | null | undefined>(),
     [aiOpen, setAiOpen] = useState(false),
-    [detail, setDetail] = useState<Entity | null>(null);
+    [detail, setDetail] = useState<Entity | null>(null),
+    [view, setView] = useState<"single" | "multi">("single");
   const items = unwrap(plans.data);
   const save = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -211,6 +213,28 @@ export default function PlansPage({ notify }: { notify: (s: string) => void }) {
   };
   return (
     <>
+      <div className="plan-view-tabs" role="tablist" aria-label="学习计划类型">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === "single"}
+          className={view === "single" ? "active" : ""}
+          onClick={() => setView("single")}
+        >
+          单课程计划
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === "multi"}
+          className={view === "multi" ? "active" : ""}
+          onClick={() => setView("multi")}
+        >
+          综合规划
+        </button>
+      </div>
+      {view === "single" ? (
+        <>
       <Toolbar count={items.length} label="份计划">
         <div className="toolbar-actions">
           <button className="btn ai-action" onClick={() => setAiOpen(true)}>
@@ -228,12 +252,17 @@ export default function PlansPage({ notify }: { notify: (s: string) => void }) {
           {items.map((p) => (
             <article key={p.id} onClick={() => open(p)}>
               <div className="plan-top">
-                <Status value={p.status} />
+                <div className="plan-card-labels">
+                  <Status value={p.status} />
+                  {p.plan_type === "multi" && <span className="plan-type">综合</span>}
+                </div>
                 <button
                   className="icon-btn"
+                  disabled={p.plan_type === "multi"}
+                  title={p.plan_type === "multi" ? "综合规划请在详情中重新生成" : "编辑计划"}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setEdit(p);
+                    if (p.plan_type !== "multi") setEdit(p);
                   }}
                 >
                   <Settings2 size={15} />
@@ -254,6 +283,18 @@ export default function PlansPage({ notify }: { notify: (s: string) => void }) {
         <Empty
           title="还没有学习计划"
           text="从目标和截止日期开始，系统会帮你保持节奏"
+        />
+      )}
+        </>
+      ) : (
+        <MultiCoursePlanner
+          courses={courses.data || []}
+          notify={notify}
+          onCreated={(plan) => {
+            setView("single");
+            plans.reload();
+            open(plan).catch((error) => notify(errorText(error)));
+          }}
         />
       )}
       {edit !== undefined && (
@@ -365,6 +406,8 @@ function PlanDetail({
 }) {
   const [add, setAdd] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [regenerationPreview, setRegenerationPreview] = useState<MultiCoursePlanPreview | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
   const courses = useData(() => api.courses(), []);
   const p = plan.progress || {};
   return (
@@ -386,15 +429,35 @@ function PlanDetail({
             <span>预计分钟</span>
           </div>
           <div className="toolbar-actions">
-            <button
-              className="btn ai-action"
-              disabled={!plan.course_id}
-              title={!plan.course_id ? "请先为计划关联课程" : undefined}
-              onClick={() => setAiOpen(true)}
-            >
-              <Sparkles size={14} />
-              AI 拆解任务
-            </button>
+            {plan.plan_type === "multi" ? (
+              <button
+                className="btn ai-action"
+                disabled={regenerating}
+                onClick={async () => {
+                  setRegenerating(true);
+                  try {
+                    setRegenerationPreview(await api.previewMultiPlanRegeneration(plan.id));
+                  } catch (error) {
+                    notify(errorText(error));
+                  } finally {
+                    setRegenerating(false);
+                  }
+                }}
+              >
+                <RotateCcw className={regenerating ? "spin" : ""} size={14} />
+                {regenerating ? "计算中…" : "重新生成预览"}
+              </button>
+            ) : (
+              <button
+                className="btn ai-action"
+                disabled={!plan.course_id}
+                title={!plan.course_id ? "请先为计划关联课程" : undefined}
+                onClick={() => setAiOpen(true)}
+              >
+                <Sparkles size={14} />
+                AI 拆解任务
+              </button>
+            )}
             <button className="btn primary" onClick={() => setAdd(true)}>
               <Plus size={15} />
               添加日程任务
@@ -513,6 +576,66 @@ function PlanDetail({
             }}
             notify={notify}
           />
+        )}
+        {regenerationPreview && (
+          <Modal title="重新生成综合规划" onClose={() => setRegenerationPreview(null)} wide>
+            <div className="regeneration-preview">
+              <p className="regeneration-note">
+                <RotateCcw size={17} />
+                只替换这份计划中尚未完成的自动任务；已完成任务和手工任务会原样保留。
+              </p>
+              <div className="capacity-grid">
+                <div><span>可用容量</span><b>{regenerationPreview.capacity_minutes}</b><small>分钟</small></div>
+                <div><span>实际需求</span><b>{regenerationPreview.required_minutes}</b><small>分钟</small></div>
+                <div><span>已安排</span><b>{regenerationPreview.scheduled_minutes}</b><small>分钟</small></div>
+                <div className={regenerationPreview.unscheduled_minutes ? "overload" : ""}>
+                  <span>未安排</span><b>{regenerationPreview.unscheduled_minutes}</b><small>分钟</small>
+                </div>
+              </div>
+              {regenerationPreview.warnings.length > 0 && (
+                <div className="multi-warnings">
+                  <AlertTriangle size={17} />
+                  <div>{regenerationPreview.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>
+                </div>
+              )}
+              <div className="regeneration-days">
+                {regenerationPreview.daily_schedule.map((day) => (
+                  <article key={day.date}>
+                    <header><b>{dayText(day.date)}</b><span>{day.total_minutes} 分钟</span></header>
+                    {day.tasks.map((task) => (
+                      <p key={`${day.date}-${task.course_id}`}>
+                        <span>{task.course_name}</span><b>{task.estimated_minutes} 分钟</b>
+                      </p>
+                    ))}
+                  </article>
+                ))}
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn subtle" onClick={() => setRegenerationPreview(null)}>取消</button>
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={regenerating || !regenerationPreview.version}
+                  onClick={async () => {
+                    if (!regenerationPreview.version) return;
+                    setRegenerating(true);
+                    try {
+                      await api.regenerateMultiPlan(plan.id, regenerationPreview.version);
+                      notify("综合规划已重新生成");
+                      setRegenerationPreview(null);
+                      onChange();
+                    } catch (error) {
+                      notify(errorText(error));
+                    } finally {
+                      setRegenerating(false);
+                    }
+                  }}
+                >
+                  {regenerating ? "正在替换…" : "确认重新生成"}
+                </button>
+              </div>
+            </div>
+          </Modal>
         )}
       </div>
     </Modal>

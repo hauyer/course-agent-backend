@@ -1,3 +1,36 @@
 @import "./styles/foundation.css";
 @import "./styles/workbench.css";
 @import "./styles/interactions.css";
+.plan-view-tabs {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 22px;
+  padding: 4px;
+  border: 1px solid #dbe1da;
+  border-radius: 12px;
+  background: #edf1ec;
+}
+
+.plan-view-tabs button {
+  border: 0;
+  border-radius: 9px;
+  padding: 9px 18px;
+  background: transparent;
+  color: #6d786f;
+  transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+}
+
+.plan-view-tabs button.active {
+  background: #fff;
+  color: #263129;
+  box-shadow: 0 3px 10px rgba(48, 62, 50, .08);
+}
+
+.plan-card-labels { display: flex; align-items: center; gap: 7px; }
+.plan-type {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e9eee7;
+  color: #607063;
+  font-size: 11px;
+}

@@ -12,6 +12,12 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
 from app.schemas.study_plan import (
+    MultiCoursePlanCoursesResponse,
+    MultiCoursePlanCreateResponse,
+    MultiCoursePlanPreviewResponse,
+    MultiCoursePlanRequest,
+    MultiCourseRegenerateRequest,
+    MultiCourseStoredDailyScheduleResponse,
     StudyPlanCreate,
     StudyPlanListResponse,
     StudyPlanProgressResponse,
@@ -37,6 +43,15 @@ from app.services.study_plan_service import (
     update_study_plan_status,
 )
 from app.services.task_service import get_task_by_id
+from app.services.multi_course_plan_service import (
+    MultiPlanConflictError,
+    create_multi_course_plan,
+    get_multi_plan_courses,
+    get_multi_plan_schedule,
+    preview_multi_course_plan,
+    preview_multi_plan_regeneration,
+    regenerate_multi_course_plan,
+)
 
 
 router = APIRouter()
@@ -83,6 +98,64 @@ def _get_owned_plan(
         )
 
     return plan
+
+
+def _raise_multi_plan_error(exc: Exception) -> None:
+    if isinstance(exc, PermissionError):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    if isinstance(exc, MultiPlanConflictError):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=str(exc),
+    ) from exc
+
+
+@router.post(
+    "/multi/preview",
+    response_model=MultiCoursePlanPreviewResponse,
+    summary="预览多课程综合规划",
+)
+def preview_multi_course_plan_api(
+    plan_in: MultiCoursePlanRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return preview_multi_course_plan(
+            db,
+            user_id=current_user.id,
+            request=plan_in,
+        )
+    except (PermissionError, ValueError) as exc:
+        _raise_multi_plan_error(exc)
+
+
+@router.post(
+    "/multi",
+    response_model=MultiCoursePlanCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="确认创建多课程综合规划",
+)
+def create_multi_course_plan_api(
+    plan_in: MultiCoursePlanRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return create_multi_course_plan(
+            db,
+            user_id=current_user.id,
+            request=plan_in,
+        )
+    except (PermissionError, ValueError) as exc:
+        _raise_multi_plan_error(exc)
 
 
 @router.post(
@@ -352,6 +425,108 @@ def get_study_plan_progress_api(
         db=db,
         plan_id=plan.id,
     )
+
+
+@router.get(
+    "/{plan_id}/courses",
+    response_model=MultiCoursePlanCoursesResponse,
+    summary="查询综合规划课程配置",
+)
+def get_multi_plan_courses_api(
+    plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    plan = _get_owned_plan(
+        db=db,
+        user_id=current_user.id,
+        plan_id=plan_id,
+    )
+    if plan.plan_type != "multi":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该计划不是综合规划",
+        )
+    items = get_multi_plan_courses(
+        db,
+        user_id=current_user.id,
+        plan_id=plan.id,
+    )
+    return {"total": len(items), "items": items}
+
+
+@router.get(
+    "/{plan_id}/schedule",
+    response_model=list[MultiCourseStoredDailyScheduleResponse],
+    summary="查询综合规划日程",
+)
+def get_multi_plan_schedule_api(
+    plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    plan = _get_owned_plan(
+        db=db,
+        user_id=current_user.id,
+        plan_id=plan_id,
+    )
+    if plan.plan_type != "multi":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该计划不是综合规划",
+        )
+    return get_multi_plan_schedule(
+        db,
+        user_id=current_user.id,
+        plan_id=plan.id,
+    )
+
+
+@router.post(
+    "/{plan_id}/multi/preview-regeneration",
+    response_model=MultiCoursePlanPreviewResponse,
+    summary="预览综合规划重新生成结果",
+)
+def preview_multi_plan_regeneration_api(
+    plan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    plan = _get_owned_plan(
+        db=db,
+        user_id=current_user.id,
+        plan_id=plan_id,
+    )
+    try:
+        return preview_multi_plan_regeneration(
+            db,
+            user_id=current_user.id,
+            plan=plan,
+        )
+    except (PermissionError, ValueError) as exc:
+        _raise_multi_plan_error(exc)
+
+
+@router.post(
+    "/{plan_id}/multi/regenerate",
+    response_model=MultiCoursePlanCreateResponse,
+    summary="确认重新生成综合规划",
+)
+def regenerate_multi_plan_api(
+    plan_id: int,
+    regenerate_in: MultiCourseRegenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return regenerate_multi_course_plan(
+            db,
+            user_id=current_user.id,
+            plan_id=plan_id,
+            expected_version=regenerate_in.expected_version,
+        )
+    except (PermissionError, ValueError) as exc:
+        _raise_multi_plan_error(exc)
 
 
 @router.delete(

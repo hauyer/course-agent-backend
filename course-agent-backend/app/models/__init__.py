@@ -7,6 +7,7 @@ from app.models.chat_message import ChatMessage
 from app.models.task import Task
 from app.models.study_plan import StudyPlan
 from app.models.study_plan_task import StudyPlanTask
+from app.models.study_plan_course import StudyPlanCourse
 from app.models.note import Note
 from app.models.note_sync_record import NoteSyncRecord
 from app.models.learning_record import LearningRecord

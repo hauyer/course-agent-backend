@@ -2,6 +2,78 @@ export const API_BASE = import.meta.env.VITE_API_URL || "/api";
 
 export type Entity = Record<string, any>;
 
+export interface MultiCoursePlanCourseInput {
+  course_id: number;
+  priority: number;
+  deadline: string;
+  target_minutes: number;
+}
+
+export interface MultiCoursePlanRequest {
+  title: string;
+  goal?: string;
+  start_date: string;
+  end_date: string;
+  daily_minutes: number;
+  available_weekdays: number[];
+  courses: MultiCoursePlanCourseInput[];
+  client_request_id: string;
+}
+
+export interface MultiCourseAllocation {
+  course_id: number;
+  course_name: string;
+  priority: number;
+  deadline: string;
+  target_minutes: number;
+  progress_percent: number;
+  existing_task_minutes: number;
+  required_minutes: number;
+  scheduled_minutes: number;
+  unscheduled_minutes: number;
+  weight: number;
+}
+
+export interface MultiCourseScheduledTask {
+  course_id: number;
+  course_name: string;
+  title: string;
+  description: string;
+  priority: "low" | "medium" | "high" | "urgent";
+  estimated_minutes: number;
+  planned_date: string;
+  due_at: string;
+}
+
+export interface MultiCourseDailySchedule {
+  date: string;
+  total_minutes: number;
+  tasks: MultiCourseScheduledTask[];
+  course_summary: Array<{
+    course_id: number;
+    course_name: string;
+    minutes: number;
+  }>;
+  warnings: string[];
+}
+
+export interface MultiCoursePlanPreview {
+  capacity_minutes: number;
+  required_minutes: number;
+  scheduled_minutes: number;
+  unscheduled_minutes: number;
+  warnings: string[];
+  daily_schedule: MultiCourseDailySchedule[];
+  course_summary: MultiCourseAllocation[];
+  version?: number;
+}
+
+export interface MultiCoursePlanCreateResult {
+  plan: Entity;
+  preview: MultiCoursePlanPreview;
+  created: boolean;
+}
+
 export function uploadRequest<T = any>(
   endpoint: string,
   body: FormData,
@@ -175,6 +247,44 @@ export const api = {
     request(`/study-plans/${planId}/tasks/${taskId}`, { method: "DELETE" }),
   deletePlan: (id: number) =>
     request(`/study-plans/${id}`, { method: "DELETE" }),
+  multiPlanPreview: (body: MultiCoursePlanRequest) =>
+    request<MultiCoursePlanPreview>("/study-plans/multi/preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  createMultiPlan: (body: MultiCoursePlanRequest) =>
+    request<MultiCoursePlanCreateResult>("/study-plans/multi", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  multiPlanCourses: (id: number) =>
+    request<{
+      total: number;
+      items: Array<{
+        id: number;
+        course_id: number;
+        course_name: string;
+        priority: number;
+        deadline: string;
+        target_minutes: number;
+        weight: number;
+      }>;
+    }>(`/study-plans/${id}/courses`),
+  multiPlanSchedule: (id: number) =>
+    request<MultiCourseDailySchedule[]>(`/study-plans/${id}/schedule`),
+  previewMultiPlanRegeneration: (id: number) =>
+    request<MultiCoursePlanPreview>(
+      `/study-plans/${id}/multi/preview-regeneration`,
+      { method: "POST" },
+    ),
+  regenerateMultiPlan: (id: number, expectedVersion: number) =>
+    request<MultiCoursePlanCreateResult>(
+      `/study-plans/${id}/multi/regenerate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expected_version: expectedVersion }),
+      },
+    ),
   notes: (query = "") => request(`/notes${query ? `?${query}` : ""}`),
   createNote: (body: Entity) =>
     request("/notes", { method: "POST", body: JSON.stringify(body) }),

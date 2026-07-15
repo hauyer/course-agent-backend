@@ -4,8 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.dialects.mysql import LONGTEXT
-from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 
 from app.agent.citations import (
@@ -22,11 +20,6 @@ from app.models.user import User
 from app.services import citation_service
 from app.schemas.agent import AgentChatRequest
 from app.routers import agent as agent_router
-
-
-@compiles(LONGTEXT, "sqlite")
-def compile_longtext_for_sqlite(_type, _compiler, **_kwargs):
-    return "TEXT"
 
 
 def citation_item(chunk_id: int) -> dict:
